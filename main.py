@@ -11,13 +11,13 @@ except ModuleNotFoundError:
 
 class Main():
     def __init__(self, list_data: list = [], 
-                 file_name: str = "",
+                 file: str = "",
                  width: int = 600, height: int = 800,
                  dpi: int = 100,
                  time: int | float = 0.001):
         
         self.list_data = list_data
-        self.file_name = file_name
+        self.file = file
         self.width = width
         self.height = height
         self.dpi = dpi
@@ -33,25 +33,25 @@ class Main():
         self.info_lable.place(y=0, x=0)
 
         # Создаём поле ввода названия файла или путя
-        self.file_name_entry = tk.Entry(self.root, width=50)
-        self.file_name_entry.place(y=30, x=0)
+        self.file_entry = tk.Entry(self.root, width=50)
+        self.file_entry.place(y=30, x=0)
 
         # Создаём кнопку обновления названия файла или пути 
-        self.file_name_update_button = tk.Button(self.root, text="Обновить название фаила.", command=self.update_file_name)
-        self.file_name_update_button.place(y=30, x=360)
+        self.file_update_button = tk.Button(self.root, text="Загрузить файл", command=self.update_file)
+        self.file_update_button.place(y=30, x=360)
 
         # Создаём кнопку для запроса файла
-        self.file_name_ask_path = tk.Button(self.root, text="Обзор", command=self.ask_path)
-        self.file_name_ask_path.place(y=60, x=360)
+        self.file_ask_path = tk.Button(self.root, text="Обзор", command=self.ask_path)
+        self.file_ask_path.place(y=60, x=360)
 
         # "Биндим" функции на различные действия
-        self._focus_out_file_name_entry()
-        self.file_name_entry.bind("<Return>", self.update_file_name)
-        self.file_name_entry.bind("<FocusIn>", self._focus_in_file_name_entry)
-        self.file_name_entry.bind("<FocusOut>", self._focus_out_file_name_entry)
+        self._focus_out_file_entry()
+        self.file_entry.bind("<Return>", self.update_file)
+        self.file_entry.bind("<FocusIn>", self._focus_in_file_entry)
+        self.file_entry.bind("<FocusOut>", self._focus_out_file_entry)
 
         # Создаём кнопку загрузки и начала отрисовки 
-        self.load_file_button = tk.Button(self.root, text="Загрузить файл", command=self.load_file)
+        self.load_file_button = tk.Button(self.root, text="Начать отрисовку", command=self.load_file)
         self.load_file_button.place(y=60, x=0)
 
         # Создаём кнопку остановки
@@ -76,8 +76,8 @@ class Main():
 
     def load_file(self):
         "Загрузка фаила."
-        with open(self.file_name, "r", encoding="utf-8") as file:
-            self.line_values = [float(i) for i in file.read().splitlines() if i.strip()]
+        with open(self.file, "r", encoding="utf-8") as f:
+            self.line_values = [float(i) for i in f.read().splitlines() if i.strip()]
 
             # Очиняем и обновляем график
             self.ax.clear()
@@ -92,14 +92,14 @@ class Main():
             self._add_step_for_line()
 
             # Закрываем файл
-            file.close()
+            f.close()
         
     def ask_path(self):
         "Обзор фаилов."
-        self.file_name = filedialog.askopenfilename(title="Выберете файл.", filetypes=[("Текстовые файлы.", "*.txt"),
+        self.file = filedialog.askopenfilename(title="Выберете файл.", filetypes=[("Текстовые файлы.", "*.txt"),
                                                                                         ("Все файлы.", "*.*")])
-        self.file_name_entry.delete(0, tk.END)
-        self.file_name_entry.insert(tk.END, self.file_name)
+        self.file_entry.delete(0, tk.END)
+        self.file_entry.insert(tk.END, self.file)
 
     def _add_step_for_line(self):
         "Шаг отрисовки."
@@ -127,28 +127,28 @@ class Main():
         "Обновление информационной надписи."
         self.info_lable.config(text=f"Максимальное значение: {max(self.list_data) if self.list_data else 0:.4f}")
     
-    def update_file_name(self, *argv):
+    def update_file(self, *argv):
         "Обновление названия файла или путь."
         # Если это файл
-        if Path(self.file_name).is_file():
-            self.file_name = self.file_name_entry.get()
-            self.file_name_entry.delete(0, tk.END)
-            self.file_name_entry.insert(tk.END, "Сохранено!")
+        if Path(self.file).is_file():
+            self.file = self.file_entry.get()
+            self.file_entry.delete(0, tk.END)
+            self.file_entry.insert(tk.END, "Сохранено!")
         # Если это не файл
         else:
-            self.file_name_entry.delete(0, tk.END)
-            self.file_name_entry.insert(tk.END, "Таково файла не существует.")
+            self.file_entry.delete(0, tk.END)
+            self.file_entry.insert(tk.END, "Таково файла не существует.")
 
-    def _focus_in_file_name_entry(self, *argv):
+    def _focus_in_file_entry(self, *argv):
         "Фокус на виджет."
-        if self.file_name_entry.get().strip() in ["Введите название фаила.", "Сохранено!", "Таково файла не существует."] :
-            self.file_name_entry.delete(0, tk.END)
+        if self.file_entry.get().strip() in ["Введите название файла.", "Сохранено!", "Таково файла не существует."] :
+            self.file_entry.delete(0, tk.END)
     
-    def _focus_out_file_name_entry(self, *argv):
+    def _focus_out_file_entry(self, *argv):
         "Фокус с виджета."
-        if not self.file_name_entry.get().split():
-            self.file_name_entry.delete(0, tk.END)
-            self.file_name_entry.insert(tk.END, "Введите название фаила.")
+        if not self.file_entry.get().split():
+            self.file_entry.delete(0, tk.END)
+            self.file_entry.insert(tk.END, "Введите название файла.")
         
 if __name__ == "__main__":
     Main()
