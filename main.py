@@ -1,8 +1,14 @@
 import sys
+import threading
 import tkinter as tk
 from tkinter import filedialog 
+from serial import serialutil
+import time
+import queue
+from functools import partial
 try:
     import serial
+    from serial.tools import list_ports
 except ModuleNotFoundError:
     print("Библиотека pyserial не установлена.")
     sys.exit(1)
@@ -13,85 +19,59 @@ except ModuleNotFoundError:
     print("Библиотека matplotlib не установлена.")
     sys.exit(1)
 
+class NoCom():
+    def __init__(self):
+        self.port = "выберите порт"
+        self.baudrate = 9600
+        self.in_waiting = 0
+    def close(self):
+        pass
+    def readline(self):
+        return 0 
+
 class Main():
-    def __init__(self, list_data: list = [], 
-                 file: str = "",
-                 width: int = 600, height: int = 800,
-                 dpi: int = 100,
-                 time: int | float = 0.001,
-                 min_threshold: float = 0.5):
-        
-        self.list_data = list_data
-        self.file = file
-        self.width = width
-        self.height = height
-        self.dpi = dpi
-        self.time = int(time * 1000)
+    serial_thread = None
+    result_queue = queue.Queue()
+    def __init__(self):
+        self.list_data_time = []
+        self.list_data = []
+        self.file = ""
+        self.width = 1200
+        self.height = 600
+        self.dpi = 100
         self.line_values = []
-        self.min_threshold = min_threshold
+        self.serial_port = NoCom()
+        self.serial_stop_read_value = False
+
+        self.start_time = time.time()
 
         # Создание окна
         self.root = tk.Tk()
         self.root.geometry(f"{self.width}x{self.height}")
+
+        self.menu = tk.Menu(self.root)
         
-        self.plot_group_settings = tk.LabelFrame(self.root,
-                                            text="Управление графика",
-                                            relief="solid",
-                                            padx=5,
-                                            pady=5,
-                                            height=90,
-                                            width=90)
-        self.plot_group_settings.pack(anchor="nw", padx=10, pady=10, fill="both", expand=False)
-        
-        # Создаём кнопку загрузки и начала отрисовки 
-        self.load_file_button = tk.Button(self.plot_group_settings, text="Начать отрисовку", command=self.load_file)
-        self.load_file_button.pack(anchor="nw")
+        self.file_menu = tk.Menu(self.menu, tearoff=False)
+        self.file_menu.add_command(label="Открыть", command=self.ask_path)
+        self.file_menu.add_command(label="Перезагрузить файл", command=self.update_file)
+        self.file_menu.add_command(label="Сохранить файл", command=self.save_file)
 
-        # Создаём кнопку остановки
-        self.stop_button = tk.Button(self.plot_group_settings, text="Завершить отрисовку", command=self.stop)
-        self.stop_button.pack(anchor="nw")
+        self.menu.add_cascade(label="Файл", menu=self.file_menu)
 
-        self.file_group_settings = tk.LabelFrame(self.root,
-                                                text="Управление фаила",
-                                                relief="solid",
-                                                padx=5,
-                                                pady=5,
-                                                height=90,
-                                                width=90)
-        self.file_group_settings.pack(anchor="nw", padx=10, pady=10, fill="both", expand=False)
+        self.serial_menu = tk.Menu(self.menu, tearoff=False)
+        self.serial_setup_menu = tk.Menu(self.serial_menu, tearoff=False)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
 
-        # Создаём поле ввода названия файла или путя
-        self.file_entry = tk.Entry(self.file_group_settings, width=50)
-        self.file_entry.pack(anchor="nw")
+        self.list_serial = []
+        self.update_list_serial_ports()
 
-        # Создаём кнопку обновления названия файла или пути 
-        self.file_update_button = tk.Button(self.file_group_settings, text="Загрузить файл", command=self.update_file)
-        self.file_update_button.pack(anchor="nw")
+        self.serial_menu.add_command(label=f"Текущий COM порт: {self.serial_port.port}")
+        self.serial_menu.add_cascade(label="Установить COM порт", menu=self.serial_setup_menu)
+        self.serial_menu.add_command(label="Обновить список портов", command=self.update_list_serial_ports)
+        self.serial_menu.add_command(label="Начать читать из COM порта", command=self.serial_start_read)
 
-        # Создаём кнопку для запроса файла
-        self.file_ask_path = tk.Button(self.file_group_settings, text="Обзор", command=self.ask_path)
-        self.file_ask_path.pack(anchor="nw")
+        self.menu.add_cascade(label="COM порт", menu=self.serial_menu)
 
-        # "Биндим" функции на различные действия
-        self._focus_out_file_entry()
-        self.file_entry.bind("<Return>", self.update_file)
-        self.file_entry.bind("<FocusIn>", self._focus_in_file_entry)
-        self.file_entry.bind("<FocusOut>", self._focus_out_file_entry)
-
-        
-        # Создаём поле ввода ввода минимального порога чисел
-        self.min_threshold_entry = tk.Entry(self.plot_group_settings, width=50)
-        self.min_threshold_entry.pack(anchor="nw")
-
-        # "Биндим" функции на различные действия
-        self._focus_out_min_threshold_entry()
-        self.min_threshold_entry.bind("<Return>", self.update_min_threshold)
-        self.min_threshold_entry.bind("<FocusIn>", self._focus_in_min_threshold_entry)
-        self.min_threshold_entry.bind("<FocusOut>", self._focus_out_min_threshold_entry)
-
-        # Создаём кнопки обновления минимального порога чисел
-        self.min_threshold_button = tk.Button(self.plot_group_settings, text="Обновить минимальный порог", command=self.update_min_threshold)
-        self.min_threshold_button.pack(anchor="nw")
+        self.menu.add_command(label="Стоп", command=self.stop)
 
         # Инициализируем график
         self.fig = Figure((self.width / self.dpi, self.height / self.dpi), dpi=self.dpi)
@@ -100,142 +80,142 @@ class Main():
         self.ax.set_xlabel("t, мс")
         self.line, = self.ax.plot(range(len(self.list_data)), self.list_data, "o-")
 
-        self.plot_group = tk.LabelFrame(self.root,
-                                        text="График",
-                                        relief="solid",
-                                        padx=5,
-                                        pady=5,)
-        self.plot_group.pack(anchor="nw", padx=10, pady=10, fill="both")
-
-        # Создаём информационную надпись
-        self.info_label = tk.Label(self.plot_group, text="Максимальное значение: 0.0000")
+        # Создаём надпись для вывода максимального значения
+        self.info_label = tk.Label(self.root, text="Максимальное значение: 0.00")
         self.info_label.pack(anchor="nw")
 
-        self.canvas = FigureCanvasTkAgg(self.fig, self.plot_group)
+        self.canvas = FigureCanvasTkAgg(self.fig, self.root)
         self.canvas.draw()
-        toolbar = NavigationToolbar2Tk(self.canvas, self.plot_group)
+        toolbar = NavigationToolbar2Tk(self.canvas, self.root)
         toolbar.update()
         self.canvas.get_tk_widget().pack(anchor="nw")
         
         # Зацикливаем
+        self.root.config(menu=self.menu)
         self.root.mainloop()
+        self.serial_stop_read_value = True
+        self.serial_port.close()
 
-    def load_file(self):
-        "Загрузка фаила."
-        with open(self.file_name, "r", encoding="utf-8") as file:
-            self.line_values = []
-            for line_value in file.read().splitlines():
-                line_value = line_value[:line_value.rfind("]")][:line_value.find("[")]
-                if line_value and float(line_value) >= self.min_threshold:
-                    self.line_values.append(float(line_value))
-            # Закрываем файл
-            file.close()
-        self.line_values = self.remove_double(self.line_values)
-        # Очиняем и обновляем график
+    def update_list_serial_ports(self):
+        self.list_serial = [i.device for i in list_ports.comports()]
+        self.list_serial.sort()
+        self.serial_setup_menu.destroy()
+        self.serial_setup_menu = tk.Menu(self.serial_menu, tearoff=False)    
+        for i in self.list_serial:
+            self.serial_setup_menu.add_command(label=i, command=partial(self.set_serial_port, i))
+        self.serial_menu.entryconfig(1, menu=self.serial_setup_menu)
+
+    def update_file(self):
         self.list_data = []
-        self.ax.clear()
-        self.line, = self.ax.plot([], [], "o-")
-
-        # Ставим названия сторон
-        self.ax.set_ylabel("m, т")
-        self.ax.set_xlabel("t, мс")
-            
-        # Начинаем отрисовку
-        self._add_step_for_line()
+        self.list_data_time = []
+        self.stop()
+        with open(self.file_name, "r", encoding="utf-8") as file:
+            for value in file.read().splitlines():
+                value = value.split()
+                self.list_data.append(value[0])
+                self.list_data_time.append(value[1])
+                self.serial_read_loop(chanchet=True)
+            file.close()
         
-    def ask_path(self):
-        "Обзор фаилов."
+    def ask_path(self): 
         self.file_name = filedialog.askopenfilename(title="Выберете файл.", filetypes=[("Текстовые файлы.", "*.txt"),
                                                                                         ("Все файлы.", "*.*")])
-        self.file_entry.delete(0, tk.END)
-        self.file_entry.insert(tk.END, self.file_name)
+        self.update_file()
+    
+    def save_file(self):
+        file = filedialog.asksaveasfile(title="Выберете файл.", filetypes=[("Текстовые файлы.", "*.txt")])
+        file.write("\n".join([(f"{self.list_data[i]} \t {self.list_data_time[i]}") for i in range(len(self.list_data))]))
+        file.close()
 
-    def _add_step_for_line(self):
-        "Шаг отрисовки."
-        if self.line_values:
-            # Обновление информациональных надписей
-            self.update_info_label()
-            x = self.line_values.pop(0)
-            self.list_data.append(x)
+    def stop(self):
+        self.serial_stop_read_value = True
+    
+    def update_info_label(self, *argv):
+        self.info_label.config(text=f"Максимальное значение: {max(map(float, self.list_data)) if self.list_data else 0:.2f}")
 
+    def set_serial_port(self, port):
+        self.serial_port.close()
+        try:
+            self.serial_port = serial.Serial(port, self.serial_port.baudrate)
+            self.serial_menu.entryconfig(0, label=f"Текущий COM порт: {port}")
+        except serialutil.SerialException:
+            self.serial_port = NoCom()
+            self.serial_menu.entryconfig(0, label=f"Не удалось открыть порт: {port}")
+
+    def serial_read_loop(self, chanchet=False):
+        self.update_info_label()
+
+        try:
+            while True:
+                val = self.result_queue.get_nowait()
+                self.list_data.append(val[0])
+                self.list_data_time.append(val[1])
+                chanchet = True
+
+                
+        except queue.Empty:
+            pass
+        
+        if chanchet:
             # Обновляет данные
-            self.line.set_data([i * self.time for i in range(len(self.list_data))], self.list_data)
+            self.line.set_data(self.list_data_time, self.list_data)
             self.ax.relim()
             self.ax.autoscale_view()
 
             # Отрисовка графика
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
-            self.root.after(self.time, self._add_step_for_line)
-
-    def stop(self):
-        "Остановка отрисовки."
-        self.line_values = []
-    
-    def update_info_label(self, *argv):
-        "Обновление информационной надписи."
-        self.info_label.config(text=f"Максимальное значение: {max(self.list_data) if self.list_data else 0:.4f}")
-    
-    def update_file(self, *argv):
-        "Обновление названия файла или путь."
-        try:
-            open(self.file_name)
-        except FileNotFoundError:
-            self.file_entry.delete(0, tk.END)
-            self.file_entry.insert(tk.END, "Таково файла не существует.")
-        else:
-            self.file = self.file_entry.get()
-            self.file_entry.delete(0, tk.END)
-            self.file_entry.insert(tk.END, "Сохранено!")
-            self.root.after(2000, lambda: (self.file_entry.delete(0, tk.END),
-                                           self.file_entry.insert(tk.END, self.file)))
             
-    def update_min_threshold(self, *argv):
-        "Обновление минимального порога"
-        try:
-            min_threshold_file = self.min_threshold_entry.get()
-            self.min_threshold = float(min_threshold_file)
-            self.min_threshold_entry.delete(0, tk.END)
-            self.min_threshold_entry.insert(tk.END, "Сохранено!")
-            self.root.after(2000, lambda: (self.min_threshold_entry.delete(0, tk.END),
-                                           self.min_threshold_entry.insert(tk.END, self.min_threshold)))
-        except ValueError:
-            self.min_threshold_entry.delete(0, tk.END)
-            self.min_threshold_entry.insert(tk.END, "Число не возможно перевести в дробь.")
+            if not self.serial_stop_read_value:
+                self.root.after(1, self.serial_read_loop)
+        else:
+            if not self.serial_stop_read_value:
+                self.root.after(10, self.serial_read_loop)
 
-    def _focus_in_min_threshold_entry(self, *argv):
-        "Фокус на виджет."
-        if self.min_threshold_entry.get().strip() in ["Число не возможно перевести в дробь.", "Сохранено!", "Введите минимальный порог."]:
-            self.min_threshold_entry.delete(0, tk.END)
-    
-    def _focus_out_min_threshold_entry(self, *argv):
-        "Фокус с виджета."
-        if not self.min_threshold_entry.get().strip():
-            self.min_threshold_entry.delete(0, tk.END)
-            self.min_threshold_entry.insert(tk.END, "Введите минимальный порог.")
 
-    def _focus_in_file_entry(self, *argv):
-        "Фокус на виджет."
-        if self.file_entry.get().strip() in ["Введите название файла.", "Сохранено!", "Таково файла не существует."] :
-            self.file_entry.delete(0, tk.END)
+    def serial_start_read(self):
+        self.list_data_time = []
+        self.list_data = []
+
+        self.serial_stop_read_value = False
+        
+        self.serial_thread = threading.Thread(target=self.serial_demon, daemon=True)
+        self.serial_thread.start()
+        
+        self.root.after(1, self.serial_read_loop)
     
-    def _focus_out_file_entry(self, *argv):
-        "Фокус с виджета."
-        if not self.file_entry.get().split():
-            self.file_entry.delete(0, tk.END)
-            self.file_entry.insert(tk.END, "Введите название файла.")
-    
-    @staticmethod
-    def remove_double(lst: list | tuple):
-        "Удаление дубликатов в списке."
-        result = []
-        last = None
-        for i in lst:
-            if i == last:
-                continue
-            result.append(i)
-            last = i
-        return result
+    def serial_stop_read(self):
+        self.serial_stop_read_value = True
+
+    def serial_demon(self):
+        """Фоновый поток чтения данных"""
+        print("Поток чтения запущен")
+        last = 0
+        while not self.serial_stop_read_value:
+            try:
+                if self.serial_port.in_waiting > 0:
+                    line = self.serial_port.readline() 
+                    if not line: continue
+                    
+                    try:
+                        line_str = line.decode("ascii").strip()
+                        if line_str and line_str != last:
+                            value = float(line_str)
+                            last = line_str
+                            self.result_queue.put((value, float((time.time() - self.start_time))))
+                    except ValueError:
+                        print(f"Ошибка парсинга числа: {line}")
+                    except UnicodeDecodeError:
+                        print("Ошибка кодировки")
+                else:
+                    time.sleep(0.01) # Не грузим CPU, если данных нет
+            except Exception as e:
+                print(f"Ошибка в потоке: {e}")
+                self.serial_stop_read_value = True
+                break
+        print("Поток чтения остановлен")
+
+            
 
 if __name__ == "__main__":
-    Main()
+    main_app = Main()
