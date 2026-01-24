@@ -5,6 +5,8 @@ from tkinter import font
 from tkinter import filedialog 
 import time
 import queue
+from NoCom import NoCom
+from MinThreshold import MinThreshold
 from functools import partial
 try:
     import serial
@@ -20,18 +22,6 @@ except ModuleNotFoundError:
     print("Библиотека matplotlib не установлена.")
     sys.exit(1)
 
-class NoCom:
-    "Класс для эмуляции COM порта."
-    def __init__(self):
-        self.port = "выберите порт"
-        self.baudrate = 9600
-    def close(*argv, **kwarg):
-        print(argv, kwarg)
-    def readline(self):
-        return 0 
-    def join(self):
-        return
-
 class Main:
     # Классовые переменные для работы с последовательным портом
     serial_thread = NoCom()
@@ -41,7 +31,6 @@ class Main:
         # Списки для хранения данных (значения и время)
         self.list_data_time = []
         self.list_data = []
-        self.max_line_data = []
         self.file = ""
         
         # Параметры окна и графика
@@ -57,11 +46,20 @@ class Main:
 
         # Создание главного окна Tkinter
         self.root = tk.Tk()
+        self.min_threshold = MinThreshold("200x100")
+        
         self.root.geometry(f"{self.width}x{self.height}")
         
         # Создание меню приложения
         self.menu = tk.Menu(self.root)
         
+        # Создание меню минимального порога
+        self.menu.add_command(label="Минимальный порог", command=lambda:(self.min_threshold.init_window(), 
+                                                                         self.root.attributes('-disabled', True),
+                                                                         self.min_threshold.min_threshold_window.protocol("WM_DELETE_WINDOW", lambda:(
+                                                                                                                            self.min_threshold.close_window())),
+                                                                         self.min_threshold.min_threshold_window.bind("<Destroy>", lambda _: self.root.attributes('-disabled', False))))
+
         # Меню "Файл"
         self.file_menu = tk.Menu(self.menu, tearoff=False)
         self.file_menu.add_command(label="Открыть", command=self.ask_path)
@@ -87,7 +85,7 @@ class Main:
         self.menu.add_cascade(label="COM порт", menu=self.serial_menu)
         
         # Создание метки для отображения максимального значения
-        self.info_label = tk.Label(self.root, text="Максимальное значение: 0.00\n  Значение в данный момент: 0.00",
+        self.info_label = tk.Label(self.root, text="Максимальное значение: 0.00\nЗначение в данный момент: 0.00",
                                    font=font.Font(self.root, size=30))
         self.info_label.pack(anchor="nw")
 
@@ -99,7 +97,7 @@ class Main:
         
         # Создание начальной линии графика
         self.line, = self.ax.plot([], [], "o-")
-        self.max_line = self.ax.axhline(0, color="r") # self.ax.plot([], [])
+        self.max_line = self.ax.axhline(0, color="r")
         
         # Встраивание графика в Tkinter окно
         self.canvas = FigureCanvasTkAgg(self.fig, self.root)
@@ -123,23 +121,22 @@ class Main:
         """Метод для обновления списка доступных COM портов и добавления их в меню"""
         # Получение списка доступных портов
         self.list_serial = [i.device for i in list_ports.comports()]
+        # И сортируим их
         self.list_serial.sort()
         
-        # Пересоздание подменю с портами
         self.serial_setup_menu.destroy()
         self.serial_setup_menu = tk.Menu(self.serial_menu, tearoff=False)
         
-        # Добавление каждого порта как отдельной команды меню
+        # обновляем меню портов
         for i in self.list_serial:
             self.serial_setup_menu.add_command(label=i, command=partial(self.set_serial_port, i))
-        
-        # Обновление меню
+
         self.serial_menu.entryconfig(1, menu=self.serial_setup_menu)
 
     def update_plot(self):
         self.line.set_data(self.list_data_time, self.list_data)
-        self.ax.relim()           # Пересчет границ графика
-        self.ax.autoscale_view()  # Автоматическое масштабирование
+        self.ax.relim()           
+        self.ax.autoscale_view()  
         
         # Отрисовка обновленного графика
         self.fig.canvas.draw()
@@ -157,33 +154,35 @@ class Main:
             file_data = file.read().splitlines()
             for value in file_data[:-1]:
                 value = value.split()
-                self.list_data.append(float(value[0]))      # Значение
-                self.list_data_time.append(float(value[1])) # Время
+                self.list_data.append(float(value[0]))      
+                self.list_data_time.append(float(value[1])) 
             self.max_line.set_ydata([float(file_data[-1]), float(file_data[-1])])
-            self.update_plot() # Обновление графика
+            self.update_plot()
             file.close()
     
     def ask_path(self): 
         """Открытие диалога выбора файла"""
         self.file_name = filedialog.askopenfilename(
             title="Выберете файл.", 
-            filetypes=[("Текстовые файлы.", "*.txt"), ("Все файлы.", "*.*")]
+            filetypes=[("Текстовые файлы.", "*.txt"), 
+                       ("Все файлы.", "*.*")]
         )
-        if not self.file_name:
-            print("Фаил не открыт")
-        else:
+        if self.file_name:
             self.update_file()
     
     def save_file(self):
         """Сохранение данных в файл"""
         file = filedialog.asksaveasfile(
             title="Выберете файл.", 
-            filetypes=[("Текстовые файлы.", "*.txt")]
+            defaultextension=".txt",
+            filetypes=[("Текстовые файлы.", "*.txt"),
+                       ("Все файлы.", "*.*")]
         )
-        # Запись данных в формате "значение \t время"
-        file.write("\n".join([(f"{self.list_data[i]} \t {self.list_data_time[i]}") 
-                            for i in range(len(self.list_data))]) + f"\n{self.max_line.get_ydata()[0]}")
-        file.close()
+        if file:
+            # Запись данных в формате "значение \t время"
+            file.write("\n".join([(f"{self.list_data[i]} \t {self.list_data_time[i]}") 
+                                for i in range(len(self.list_data))]) + f"\n{self.max_line.get_ydata()[0]}")
+            file.close()
 
     def stop(self):
         """Остановка чтения данных с COM порта"""
@@ -193,7 +192,6 @@ class Main:
         """Обновление метки с максимальным значением"""
         if self.list_data:
             max_value = max(map(float, self.list_data))
-            #self.max_line_data.append(max_value)
             self.max_line.set_ydata([max_value, max_value])
         else:
             max_value = 0
@@ -243,9 +241,9 @@ class Main:
         self.serial_thread.join()
 
         self.start_time = time.time()
-        self.list_data_time = []  # Очистка временных данных
-        self.list_data = []       # Очистка значений
-        self.serial_stop_read_value = False  # Сброс флага остановки
+        self.list_data_time = []  
+        self.list_data = []       
+        self.serial_stop_read_value = False 
         
         # Запуск фонового потока для чтения данных
         self.serial_thread = threading.Thread(target=self.serial_demon, daemon=True)
@@ -259,14 +257,12 @@ class Main:
         print("Поток чтения запущен")
         while not self.serial_stop_read_value:
             try:
-                # Проверка наличия данных в порте
                 if self.serial_port.in_waiting > 0:
                     line = self.serial_port.readline() 
                     if not line: 
                         continue
                     
                     try:
-                        # Декодирование и преобразование данных
                         line_str = line.decode("ascii").strip()
                         if line_str:
                             value = float(line_str) 
