@@ -36,6 +36,7 @@ class Main:
         # Параметры окна и графика
         self.width = 1200
         self.height = 600
+        self.size_min_threshold_window = "200x100"
         self.dpi = 100
         self.line_values = []
         
@@ -43,23 +44,17 @@ class Main:
         self.serial_port = NoCom()
         self.serial_stop_read_value = False
         self.start_time = time.time()
+        self.min_threshold_exceeded = False
 
         # Создание главного окна Tkinter
         self.root = tk.Tk()
-        self.min_threshold = MinThreshold("200x100")
+        self.min_threshold = MinThreshold(self.size_min_threshold_window)
         
         self.root.geometry(f"{self.width}x{self.height}")
         
         # Создание меню приложения
         self.menu = tk.Menu(self.root)
         
-        # Создание меню минимального порога
-        self.menu.add_command(label="Минимальный порог", command=lambda:(self.min_threshold.init_window(), 
-                                                                         self.root.attributes('-disabled', True),
-                                                                         self.min_threshold.min_threshold_window.protocol("WM_DELETE_WINDOW", lambda:(
-                                                                                                                            self.min_threshold.close_window())),
-                                                                         self.min_threshold.min_threshold_window.bind("<Destroy>", lambda _: self.root.attributes('-disabled', False))))
-
         # Меню "Файл"
         self.file_menu = tk.Menu(self.menu, tearoff=False)
         self.file_menu.add_command(label="Открыть", command=self.ask_path)
@@ -84,6 +79,12 @@ class Main:
         self.serial_menu.add_command(label="Остановить чтение из COM порта", command=self.stop)
         self.menu.add_cascade(label="COM порт", menu=self.serial_menu)
         
+        # Создание меню минимального порога
+        self.menu.add_command(label="Минимальный порог", command=lambda:(self.min_threshold.init_window(), 
+                                                                         self.root.attributes('-disabled', True),
+                                                                         self.min_threshold.min_threshold_window.protocol("WM_DELETE_WINDOW", lambda:(self.min_threshold.close_window())),
+                                                                         self.min_threshold.min_threshold_window.bind("<Destroy>", lambda _: self.root.attributes('-disabled', False))))
+
         # Создание метки для отображения максимального значения
         self.info_label = tk.Label(self.root, text="Максимальное значение: 0.00\nЗначение в данный момент: 0.00",
                                    font=font.Font(self.root, size=30))
@@ -218,10 +219,12 @@ class Main:
         try:
             while True:
                 val = self.result_queue.get_nowait()
-                self.list_data.append(val)
-                # Добавление времени с момента начала чтения
-                self.list_data_time.append((time.time() - self.start_time))
-                chanchet = True  # Флаг обновления графика
+                if val > self.min_threshold.get_min_threshold() or self.min_threshold_exceeded:
+                    self.list_data.append(val)
+                    # Добавление времени с момента начала чтения
+                    self.list_data_time.append((time.time() - self.start_time))
+                    chanchet = True  # Флаг обновления графика
+                    self.min_threshold_exceeded = True
         except queue.Empty:
             pass  # Если очередь пуста
         
@@ -237,9 +240,7 @@ class Main:
 
     def serial_start_read(self):
         """Начало чтения данных с COM порта"""
-        self.serial_stop_read_value = True
-        self.serial_thread.join()
-
+        self.min_threshold_exceeded = False
         self.start_time = time.time()
         self.list_data_time = []  
         self.list_data = []       
