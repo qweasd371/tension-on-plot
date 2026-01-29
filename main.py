@@ -22,6 +22,7 @@ except ModuleNotFoundError:
     print("Библиотека matplotlib не установлена.")
     sys.exit(1)
 
+
 class Main:
     # Классовые переменные для работы с последовательным портом
     serial_thread = NoCom()
@@ -36,7 +37,6 @@ class Main:
         # Параметры окна и графика
         self.width = 1200
         self.height = 600
-        self.size_min_threshold_window = "200x100"
         self.dpi = 100
         self.line_values = []
         
@@ -44,11 +44,10 @@ class Main:
         self.serial_port = NoCom()
         self.serial_stop_read_value = False
         self.start_time = time.time()
-        self.min_threshold_exceeded = False
 
         # Создание главного окна Tkinter
         self.root = tk.Tk()
-        self.min_threshold = MinThreshold(self.size_min_threshold_window)
+        self.min_threshold = MinThreshold("200x100")
         
         self.root.geometry(f"{self.width}x{self.height}")
         
@@ -82,12 +81,19 @@ class Main:
         # Создание меню минимального порога
         self.menu.add_command(label="Минимальный порог", command=lambda:(self.min_threshold.init_window(), 
                                                                          self.root.attributes('-disabled', True),
-                                                                         self.min_threshold.min_threshold_window.protocol("WM_DELETE_WINDOW", lambda:(self.min_threshold.close_window())),
+                                                                         self.min_threshold.min_threshold_window.protocol("WM_DELETE_WINDOW", lambda:(
+                                                                                                                            self.min_threshold.close_window())),
                                                                          self.min_threshold.min_threshold_window.bind("<Destroy>", lambda _: self.root.attributes('-disabled', False))))
 
-        # Создание метки для отображения максимального значения
-        self.info_label = tk.Label(self.root, text="Максимальное значение: 0.00\nЗначение в данный момент: 0.00",
-                                   font=font.Font(self.root, size=30))
+        # Создание надпись для отображения максимального значения и значения в данный момент
+        self.info_label = tk.Text(self.root, height=2.5, width=self.width)
+        self.info_label.tag_config("standard text", font=("Arial", 12))
+        self.info_label.tag_config("value", font=("Arial", 30))
+        self.info_label.insert(tk.END, "Максимальное значение: ", "standard text")
+        self.info_label.insert(tk.END, "0.00", "value")
+        self.info_label.insert(tk.END, ", Значение в данный момент: ", "standard text")
+        self.info_label.insert(tk.END, "0.00", "value")
+        self.info_label.config(state=tk.DISABLED)
         self.info_label.pack(anchor="nw")
 
         # Создание фигуры matplotlib
@@ -97,8 +103,9 @@ class Main:
         self.ax.set_xlabel("t, с")  # Подпись оси X (время в секундах)
         
         # Создание начальной линии графика
-        self.line, = self.ax.plot([], [], "o-")
-        self.max_line = self.ax.axhline(0, color="r")
+        self.line, = self.ax.plot([], [], "o-", label="Значение в данный момент")
+        self.max_line = self.ax.axhline(0, color="r", label="Максимальное значение")
+        self.ax.legend()
         
         # Встраивание графика в Tkinter окно
         self.canvas = FigureCanvasTkAgg(self.fig, self.root)
@@ -157,7 +164,7 @@ class Main:
                 value = value.split()
                 self.list_data.append(float(value[0]))      
                 self.list_data_time.append(float(value[1])) 
-            self.max_line.set_ydata([float(file_data[-1]), float(file_data[-1])])
+            self.max_line.set_ydata([float(self.list_data[-1]), float(self.list_data[-1])])
             self.update_plot()
             file.close()
     
@@ -196,9 +203,13 @@ class Main:
             self.max_line.set_ydata([max_value, max_value])
         else:
             max_value = 0
-        self.info_label.config(text=f"""Максимальное значение: {max_value:.2f}
-Значение в данный момент: {(self.list_data[-1] if self.list_data else 0):.2f}""")
-
+        self.info_label.config(state=tk.NORMAL)
+        self.info_label.delete("1.0", tk.END)
+        self.info_label.insert(tk.END, "Максимальное значение: ", "standard text")
+        self.info_label.insert(tk.END, f"{max_value:.2f}", "value")
+        self.info_label.insert(tk.END, ", Значение сейчас: ", "standard text")
+        self.info_label.insert(tk.END, f"{(self.list_data[-1] if self.list_data else 0):.2f}", "value")
+        self.info_label.config(state=tk.DISABLED)
 
     def set_serial_port(self, port):
         """Установка выбранного COM порта"""
@@ -219,12 +230,10 @@ class Main:
         try:
             while True:
                 val = self.result_queue.get_nowait()
-                if val > self.min_threshold.get_min_threshold() or self.min_threshold_exceeded:
-                    self.list_data.append(val)
-                    # Добавление времени с момента начала чтения
-                    self.list_data_time.append((time.time() - self.start_time))
-                    chanchet = True  # Флаг обновления графика
-                    self.min_threshold_exceeded = True
+                self.list_data.append(val)
+                # Добавление времени с момента начала чтения
+                self.list_data_time.append((time.time() - self.start_time))
+                chanchet = True  # Флаг обновления графика
         except queue.Empty:
             pass  # Если очередь пуста
         
@@ -240,7 +249,9 @@ class Main:
 
     def serial_start_read(self):
         """Начало чтения данных с COM порта"""
-        self.min_threshold_exceeded = False
+        self.serial_stop_read_value = True
+        self.serial_thread.join()
+
         self.start_time = time.time()
         self.list_data_time = []  
         self.list_data = []       
