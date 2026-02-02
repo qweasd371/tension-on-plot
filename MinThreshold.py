@@ -1,14 +1,19 @@
 import tkinter as tk
 from tkinter import ttk
+import sys
 import re
-from unishell import regedit
+if sys.platform == "win32":
+    from unishell import regedit
 
 class MinThreshold:
     """Класс для окна минимального порога"""
 
     def __init__(self, root: tk.Tk, geometry: str):
         self.root = root
-        self.registry = regedit.Registry(regedit.CurUser) / "SOFTWARE" / "T2plot"
+        if sys.platform == "win32":
+            self.registry = regedit.Registry(regedit.CurUser) / "SOFTWARE" / "T2plot"
+        else:
+            self.registry = {"min_threshold_value": 0}
         self.geometry = geometry
         self.min_threshold_value = self.registry["min_threshold_value"]
         self.window = None
