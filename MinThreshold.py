@@ -1,8 +1,8 @@
 import tkinter as tk
 from tkinter import ttk
-import sys
 import re
-if sys.platform == "win32":
+import platform
+if platform.platform().startswith("Windows"):
     from unishell import regedit
 
 class MinThreshold:
@@ -10,7 +10,7 @@ class MinThreshold:
 
     def __init__(self, root: tk.Tk, geometry: str):
         self.root = root
-        if sys.platform == "win32":
+        if platform.platform().startswith("Windows"):
             self.registry = regedit.Registry(regedit.CurUser) / "SOFTWARE" / "T2plot"
         else:
             self.registry = {"min_threshold_value": 0}
